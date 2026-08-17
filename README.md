@@ -9,7 +9,9 @@ Discord Game Badge tracker and desktop Rich Presence experiment for the beta **G
 | ![Discord Game Time Dedicated badge with an anonymized username](assets/game-time-dedicated-anonymous.png) | ![Discord Game Variety Sampler badge with an anonymized username](assets/game-variety-sampler-anonymous.png) |
 
 > [!WARNING]
-> These scripts are not an official Discord feature or API. They modify internal Discord Webpack modules and `RunningGameStore` state. No guarantee is made that they are safe for an account, comply with Discord policies, or produce badge progress. Do not accept a risk on an account you are unwilling to lose.
+> **ACCOUNT BAN RISK:** These scripts are not an official Discord feature or API. They modify undocumented Discord client internals and generate synthetic game activity. Their use may lead to warnings, badge progress removal, temporary suspension, or permanent account termination. They are not undetectable, approved, or ban-safe. If you are unwilling to accept the possibility of losing your Discord account, do not run them.
+
+By downloading, running, modifying, or distributing this project, you assume all risks associated with your use. The authors and contributors are not responsible for account bans, suspensions, lost data, lost purchases, lost rewards, client instability, or other consequences, to the maximum extent permitted by applicable law. Read the full [Disclaimer and Assumption of Risk](DISCLAIMER.md) before using the scripts.
 
 ## What this repository does
 
@@ -168,4 +170,4 @@ The screenshots displayed in this README use an anonymized placeholder instead o
 
 ## Disclaimer
 
-This repository is an independent technical experiment and is not affiliated with, endorsed by, or sponsored by Discord, Valve, Steam, or Vencord. Discord and all referenced game names are trademarks of their respective owners.
+This repository is an independent technical experiment and is not affiliated with, endorsed by, or sponsored by Discord, Valve, Steam, or Vencord. Discord and all referenced game names are trademarks of their respective owners. The software is provided **"AS IS"** without warranties or guarantees. See [DISCLAIMER.md](DISCLAIMER.md) for the complete account-risk, no-warranty, and limitation-of-responsibility notice.
