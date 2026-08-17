@@ -2,6 +2,14 @@
 
 This project is an independent technical experiment. It is not an official Discord feature, is not affiliated with Discord, Valve, Steam, Vencord, or any game publisher, and is not endorsed or supported by any of them.
 
+## Educational and research purpose
+
+This repository is published solely for educational, security-research, interoperability, and technical-analysis purposes. Its purpose is to document and study how the Discord desktop client represents locally detected game activity and how undocumented client state can affect presence behavior.
+
+The project is not intended to encourage abuse, fraud, account-policy evasion, unauthorized access, badge manipulation, reward farming, harassment, disruption, or deceptive conduct. Users must follow all applicable laws, platform rules, and third-party terms.
+
+Describing the project as educational or research-oriented does not grant permission from Discord, create an exception to its rules, make the scripts safe to use, prevent detection, or protect an account from enforcement. Technical knowledge can still be misused, and each user remains responsible for their own actions.
+
 ## Account enforcement risk
 
 The scripts modify undocumented internal behavior in the Discord desktop client and generate synthetic game-presence signals. Discord may consider modified clients, automation, false activity, or other uses of these scripts to violate its Terms of Service, Community Guidelines, developer policies, anti-abuse systems, or future rules.
@@ -37,4 +45,3 @@ The repository describes the reviewed source currently published here. Forks, mi
 ## Legal notice
 
 This disclaimer is general project information, not legal advice, and does not guarantee that every limitation or waiver is enforceable in every jurisdiction. Nothing in this document overrides mandatory rights or liabilities that cannot legally be excluded.
-
