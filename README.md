@@ -1,5 +1,7 @@
 # Discord Game Badge Presence
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 Rich Presence and telemetry simulation scripts for Discord's beta profile badges: **Game Time (Dedicated)** and **Game Variety (Sampler)**.
 
 | Game Time — Dedicated | Game Variety — Sampler |
@@ -97,3 +99,9 @@ Call `window.__multiGamePresence.stop()` or `window.__gameTimePresence.stop()`. 
 ## Disclaimer
 
 This repository is an independent technical experiment and is not affiliated with, endorsed by, or sponsored by Discord, Valve, Steam, or Vencord. All trademarks belong to their respective owners. See [DISCLAIMER.md](DISCLAIMER.md) for full terms.
+
+---
+
+## License
+
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
