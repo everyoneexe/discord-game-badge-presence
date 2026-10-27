@@ -11,6 +11,15 @@ Rich Presence and telemetry simulation scripts for Discord's beta profile badges
 
 ---
 
+## Badge Tiers & Targets
+
+| Badge | Max Tier Target | Recommended Command |
+| --- | --- | --- |
+| **Game Variety (Sampler)** | **100+ Games** (Universalist / Mythic) | Run `multi-game-presence.js` (claims 125 fresh games) |
+| **Game Time (Dedicated)** | **5,000 Hours** (Max Badge Ceiling) | Run `game-time-presence.js` (boosts 5,000 hours in 1 shot) |
+
+---
+
 ## Features
 
 - **Game Variety (Sampler):** Fetches 10,000+ win32 games directly from Discord's official CDN list (`cdn.discordapp.com/detectables/games.json`).
@@ -24,11 +33,13 @@ Rich Presence and telemetry simulation scripts for Discord's beta profile badges
 
 ## Quick Start
 
-1. Open the Discord desktop app and press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>I</kbd> to open DevTools.
+1. Open Discord Desktop and press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>I</kbd> (or <kbd>Cmd</kbd> + <kbd>Option</kbd> + <kbd>I</kbd> on macOS) to open DevTools.
+   > [!TIP]
+   > If DevTools doesn't open on Discord Stable, enable it in `%appdata%/discord/settings.json` (`~/.config/discord/settings.json` on Linux) by adding `"DANGEROUS_ENABLE_DEVTOOLS_ONLY_ENABLE_IF_YOU_KNOW_WHAT_YOU_ARE_DOING": true`, or use Discord Canary / PTB / Vencord.
 2. Go to the **Console** tab.
 3. Paste the contents of either script and press <kbd>Enter</kbd>:
-   - [`multi-game-presence.js`](multi-game-presence.js) — Advances the **Game Variety** badge (claims 125 games by default).
-   - [`game-time-presence.js`](game-time-presence.js) — Advances the **Game Time** badge (simulates verified CS2 playtime).
+   - [`multi-game-presence.js`](multi-game-presence.js) — Claims games for the **Game Variety** badge (default: 125 games).
+   - [`game-time-presence.js`](game-time-presence.js) — Claims playtime for the **Game Time** badge (default: 5,000 hours).
 
 *(Run only one script at a time to prevent store conflicts.)*
 
