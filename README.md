@@ -28,7 +28,7 @@ Rich Presence and telemetry simulation scripts for Discord's beta profile badges
 2. Go to the **Console** tab.
 3. Paste the contents of either script and press <kbd>Enter</kbd>:
    - [`multi-game-presence.js`](multi-game-presence.js) — Advances the **Game Variety** badge (claims 125 games by default).
-   - [`cs2-presence.js`](cs2-presence.js) — Advances the **Game Time** badge (simulates verified CS2 playtime).
+   - [`game-time-presence.js`](game-time-presence.js) — Advances the **Game Time** badge (simulates verified CS2 playtime).
 
 *(Run only one script at a time to prevent store conflicts.)*
 
@@ -54,17 +54,17 @@ window.__multiGamePresence.current;
 window.__multiGamePresence.stop();
 ```
 
-### 2. Game Time Badge (`cs2-presence.js`)
+### 2. Game Time Badge (`game-time-presence.js`)
 
 ```js
 // Boost playtime hours in a single verified telemetry session:
-await window.__cs2Presence.boost(5000);
+await window.__gameTimePresence.boost(5000);
 
 // Check credited hours in this session:
-window.__cs2Presence.creditedHours;
+window.__gameTimePresence.creditedHours;
 
-// Stop Counter-Strike 2 presence:
-window.__cs2Presence.stop();
+// Stop game time presence:
+window.__gameTimePresence.stop();
 ```
 
 ---
@@ -79,7 +79,7 @@ Discord processes telemetry events through an asynchronous backend aggregation p
 No. Everything happens purely in-memory inside the Discord client. It does not launch games, modify Steam playtime, interact with VAC, or write to your filesystem.
 
 ### How do I stop and clean up?
-Call `window.__multiGamePresence.stop()` or `window.__cs2Presence.stop()`. Reloading Discord (<kbd>Ctrl</kbd> + <kbd>R</kbd>) clears all in-memory changes and restores standard client state.
+Call `window.__multiGamePresence.stop()` or `window.__gameTimePresence.stop()`. Reloading Discord (<kbd>Ctrl</kbd> + <kbd>R</kbd>) clears all in-memory changes and restores standard client state.
 
 ---
 
