@@ -1,12 +1,13 @@
 (async () => {
     "use strict";
 
-    const LOCK = "__cs2Presence";
+    const LOCK = "__gameTimePresence";
     if (window[LOCK]) {
-        console.warn("[CS2 Presence] Already running. To stop: window.__cs2Presence.stop()");
+        console.warn("[Game Time Presence] Already running. To stop: window.__gameTimePresence.stop()");
         return;
     }
     window[LOCK] = { loading: true };
+    window.__cs2Presence = window[LOCK];
 
     const IS_LINUX = /Linux/i.test(navigator.userAgent);
     const GAME = Object.freeze(IS_LINUX ? {
@@ -500,30 +501,34 @@
             });
             dispatcher.dispatch({ type: "LOCAL_ACTIVITY_UPDATE", socketId: null, pid, activity: null });
             delete window[LOCK];
-            console.log("[CS2 Presence] Stopped and store restored.");
+            delete window.__cs2Presence;
+            console.log("[Game Time Presence] Stopped and store restored.");
         };
 
-        window[LOCK] = {
+        const instance = {
             stop,
             boost,
             game,
             get creditedHours() { return totalCreditedHours; }
         };
+        window[LOCK] = instance;
+        window.__cs2Presence = instance;
         window.addEventListener("pagehide", stop, { once: true });
 
         announce();
-        console.log("[CS2 Presence] Active. Rich presence displayed: Playing Counter-Strike 2");
-        console.log("[CS2 Presence] Single-shot booster ready. Default: 5,000 hours.");
-        console.log("[CS2 Presence] Manual call: await window.__cs2Presence.boost(5000)");
-        console.log("[CS2 Presence] To stop: window.__cs2Presence.stop()");
+        console.log("[Game Time Presence] Active. Rich presence displayed: Playing Counter-Strike 2");
+        console.log("[Game Time Presence] Single-shot booster ready. Default: 5,000 hours.");
+        console.log("[Game Time Presence] Manual call: await window.__gameTimePresence.boost(5000)");
+        console.log("[Game Time Presence] To stop: window.__gameTimePresence.stop()");
 
         if (AUTO_BOOST) {
             setTimeout(() => {
-                boost(AUTO_BOOST_HOURS).catch(err => console.warn(`[CS2 Presence] Auto-boost failed: ${err.message}`));
+                boost(AUTO_BOOST_HOURS).catch(err => console.warn(`[Game Time Presence] Auto-boost failed: ${err.message}`));
             }, 1500);
         }
     } catch (err) {
         delete window[LOCK];
-        console.error("[CS2 Presence]", err);
+        delete window.__cs2Presence;
+        console.error("[Game Time Presence]", err);
     }
 })();
