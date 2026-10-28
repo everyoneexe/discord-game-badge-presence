@@ -154,14 +154,19 @@
                 const token = authStore?.getToken?.();
                 if (token && typeof token === "string") return token;
             } catch (_) {}
-            for (const exp of exports) {
-                try {
-                    // Check _dispatchToken to avoid triggering Discord's i18n translation Proxy
-                    if (exp && typeof exp === "object" && exp._dispatchToken && typeof exp.getToken === "function") {
-                        const token = exp.getToken();
-                        if (token && typeof token === "string") return token;
-                    }
-                } catch (_) {}
+            const origWarn = console.warn;
+            try {
+                console.warn = () => {};
+                for (const exp of exports) {
+                    try {
+                        if (exp && typeof exp.getToken === "function" && exp.getName?.() === "AuthenticationStore") {
+                            const token = exp.getToken();
+                            if (token && typeof token === "string") return token;
+                        }
+                    } catch (_) {}
+                }
+            } finally {
+                console.warn = origWarn;
             }
             return null;
         }
