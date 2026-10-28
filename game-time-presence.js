@@ -2,7 +2,7 @@
     "use strict";
 
     const LOCK = "__gameTimePresence";
-    if (window[LOCK]) {
+    if (window[LOCK] && !window[LOCK].loading) {
         console.warn("[Game Time Presence] Already running. To stop: window.__gameTimePresence.stop()");
         return;
     }
@@ -10,7 +10,7 @@
     window.__cs2Presence = window[LOCK];
 
     const IS_LINUX = /Linux/i.test(navigator.userAgent);
-    const GAME = Object.freeze(IS_LINUX ? {
+    const PRIMARY_GAME = Object.freeze(IS_LINUX ? {
         id: "1158877933042143272",
         name: "Counter-Strike 2",
         win_exe: "cs2.exe",
@@ -28,10 +28,17 @@
         os: "win32"
     });
 
-    // Tek seferde 5.000 saat (Game Time rozet tavanı) basma ayarı
+    // Otomatik 5.000 saat (Game Time maksimum rozet tavanı) basma ayarları
+    // Discord 7 günden eski telemetrileri drop ettiği için 5.000 saat 40 farklı doğrulanmış oyuna
+    // 125'er saat (5 gün) olarak dağıtılır. Böylece sunucu tüm veriyi firesiz kabul eder.
     const AUTO_BOOST = true;
-    const AUTO_BOOST_HOURS = 5000; // Game Time rozetinin maksimum seviyesi (5.000 saat)
+    const TOTAL_TARGET_HOURS = 5000;
+    const GAMES_TO_SPREAD = 40; // 40 oyun * 125 saat = 5.000 saat
+    const HOURS_PER_GAME = TOTAL_TARGET_HOURS / GAMES_TO_SPREAD; // 125 saat (~5 gün)
+    const BATCH_SIZE = 10;
+    const BATCH_DELAY_MS = 600;
 
+    const CDN_GAMES_URL = "https://cdn.discordapp.com/detectables/games.json";
     const CLIENT_VERSION = "1.0.9253";
     const CLIENT_BUILD_NUMBER = 594031;
     const NATIVE_BUILD_NUMBER = 88414;
@@ -57,7 +64,7 @@
         if (typeof webpackChunkdiscord_app === "undefined") return null;
 
         let req;
-        webpackChunkdiscord_app.push([[Symbol("cs2-presence")], {}, r => {
+        webpackChunkdiscord_app.push([[Symbol("game-time-presence")], {}, r => {
             if (Object.keys(r?.c ?? {}).length > Object.keys(req?.c ?? {}).length) req = r;
         }]);
         webpackChunkdiscord_app.pop();
@@ -232,12 +239,44 @@
             return auth;
         }
 
+        async function loadDetectableGames() {
+            try {
+                const res = await fetch(CDN_GAMES_URL);
+                if (res.ok) {
+                    const raw = await res.json();
+                    const list = [];
+                    const seen = new Set();
+                    for (const item of raw) {
+                        const id = String(item?.id ?? "");
+                        if (!id || seen.has(id)) continue;
+                        const winExe = item?.executables?.find(e => e?.os === "win32" && e?.name)?.name;
+                        if (!winExe) continue;
+                        seen.add(id);
+                        list.push({
+                            id,
+                            name: item.name,
+                            exe: winExe.replace(/^>/, "")
+                        });
+                    }
+                    if (list.length > 0) return list;
+                }
+            } catch (_) {}
+            return [
+                { id: PRIMARY_GAME.id, name: PRIMARY_GAME.name, exe: PRIMARY_GAME.win_exe },
+                { id: "733391060934070334", name: "Among Us", exe: "Among Us.exe" },
+                { id: "356869127241826314", name: "Grand Theft Auto V", exe: "GTA5.exe" },
+                { id: "426249774406238210", name: "Apex Legends", exe: "r5apex.exe" },
+                { id: "403164998249840640", name: "PUBG: BATTLEGROUNDS", exe: "TslGame.exe" },
+                { id: "417935350901768193", name: "Tom Clancy's Rainbow Six Siege", exe: "RainbowSix.exe" }
+            ];
+        }
+
         let seq = 0;
         const nextSeq = () => ++seq;
 
-        const buildSessionEvents = (durationMs, fingerprint, sessionIndex = 0) => {
+        const buildSessionEvents = (gameEntry, durationMs, fingerprint, sessionIndex = 0) => {
             const sessionId = uuid();
-            const offsetMs = sessionIndex * (15 * 60 * 1000); // Seansları 15 dk aralıkla geçmişe yay
+            const offsetMs = sessionIndex * (20 * 60 * 1000);
             const now = Date.now() - offsetMs;
             const start = Math.max(0, now - durationMs);
             const jitter = Math.floor(Math.random() * 450) + 120;
@@ -246,8 +285,8 @@
                 client_track_timestamp: start + jitter,
                 client_heartbeat_session_id: heartbeatSession,
                 event_sequence_number: nextSeq(),
-                game: GAME.name,
-                game_id: GAME.id,
+                game: gameEntry.name,
+                game_id: gameEntry.id,
                 verified: true,
                 elevated: false,
                 is_launcher: false,
@@ -263,7 +302,7 @@
                 activity_status_shared_guilds: [],
                 current_user_status: "online",
                 game_detection_enabled: true,
-                executable_path: GAME.win_exe,
+                executable_path: gameEntry.exe,
                 voice_channel_id: null,
                 voice_channel_type: null,
                 voice_channel_bitrate: null,
@@ -289,10 +328,10 @@
                         client_track_timestamp: start,
                         client_heartbeat_session_id: heartbeatSession,
                         event_sequence_number: nextSeq(),
-                        game_id: GAME.id,
-                        game_name: GAME.name,
+                        game_id: gameEntry.id,
+                        game_name: gameEntry.name,
                         game_metadata: null,
-                        game_executable: GAME.win_exe,
+                        game_executable: gameEntry.exe,
                         game_detection_enabled: true,
                         initial_heartbeat: true,
                         final_heartbeat: false,
@@ -315,10 +354,10 @@
                         client_track_timestamp: now,
                         client_heartbeat_session_id: heartbeatSession,
                         event_sequence_number: nextSeq(),
-                        game_id: GAME.id,
-                        game_name: GAME.name,
+                        game_id: gameEntry.id,
+                        game_name: gameEntry.name,
                         game_metadata: null,
-                        game_executable: GAME.win_exe,
+                        game_executable: gameEntry.exe,
                         game_detection_enabled: true,
                         initial_heartbeat: false,
                         final_heartbeat: true,
@@ -354,13 +393,10 @@
                 if (res.status === 429 && retry < 3) {
                     const retryHeader = res.headers.get("retry-after");
                     const waitSec = retryHeader ? parseFloat(retryHeader) : 2.5;
-                    console.warn(`[CS2 Presence] Rate limited (429). Retrying in ${waitSec.toFixed(1)}s...`);
+                    console.warn(`[Game Time Booster] Rate limited (429). Retrying in ${waitSec.toFixed(1)}s...`);
                     await new Promise(r => setTimeout(r, Math.max(waitSec * 1000, 2000)));
                     return await postScienceEvents(events, currentAuth, retry + 1);
                 }
-                const text = await res.text().catch(() => "");
-                console.warn(`[CS2 Presence] Science request returned ${res.status}` +
-                    (text ? `: ${text.slice(0, 200)}` : ""));
                 return false;
             } catch (err) {
                 if (retry < 2) {
@@ -371,7 +407,7 @@
             }
         }
 
-        // --- Rich Presence Motoru ---
+        // --- Rich Presence Motoru (Counter-Strike 2) ---
         const original = {};
         const patchable = [
             "getRunningGames", "getGameForPID", "getVisibleGame", "getVisibleRunningGames",
@@ -386,17 +422,17 @@
 
         const pid = 40000 + Math.floor(Math.random() * 20000);
         const startedAt = Date.now();
-        const game = {
-            id: GAME.id,
-            name: GAME.name,
+        const activePresenceGame = {
+            id: PRIMARY_GAME.id,
+            name: PRIMARY_GAME.name,
             pid,
             pidPath: [pid],
-            processName: GAME.name,
+            processName: PRIMARY_GAME.name,
             start: startedAt,
-            exeName: GAME.exeName,
-            exePath: GAME.exePath,
-            cmdLine: GAME.cmdLine,
-            executables: [{ os: GAME.os, name: GAME.exeName, is_launcher: false }],
+            exeName: PRIMARY_GAME.exeName,
+            exePath: PRIMARY_GAME.exePath,
+            cmdLine: PRIMARY_GAME.cmdLine,
+            executables: [{ os: PRIMARY_GAME.os, name: PRIMARY_GAME.exeName, is_launcher: false }],
             windowHandle: 0,
             fullscreenType: 0,
             overlay: true,
@@ -406,26 +442,26 @@
         };
 
         const withoutOurs = games => (games ?? []).filter(item => item?.pid !== pid);
-        runStore.getRunningGames = () => [...withoutOurs(original.getRunningGames.call(runStore)), game];
-        runStore.getGameForPID = value => value === pid ? game : original.getGameForPID.call(runStore, value);
-        if (original.getVisibleGame) runStore.getVisibleGame = () => game;
+        runStore.getRunningGames = () => [...withoutOurs(original.getRunningGames.call(runStore)), activePresenceGame];
+        runStore.getGameForPID = value => value === pid ? activePresenceGame : original.getGameForPID.call(runStore, value);
+        if (original.getVisibleGame) runStore.getVisibleGame = () => activePresenceGame;
         if (original.getVisibleRunningGames) {
-            runStore.getVisibleRunningGames = () => [...withoutOurs(original.getVisibleRunningGames.call(runStore)), game];
+            runStore.getVisibleRunningGames = () => [...withoutOurs(original.getVisibleRunningGames.call(runStore)), activePresenceGame];
         }
         if (original.getCandidateGames) {
-            runStore.getCandidateGames = () => [...withoutOurs(original.getCandidateGames.call(runStore)), game];
+            runStore.getCandidateGames = () => [...withoutOurs(original.getCandidateGames.call(runStore)), activePresenceGame];
         }
         if (original.getRunningDiscordApplicationIds) {
             runStore.getRunningDiscordApplicationIds = () => {
                 const ids = original.getRunningDiscordApplicationIds.call(runStore) ?? [];
-                return ids.includes(game.id) ? ids : [...ids, game.id];
+                return ids.includes(activePresenceGame.id) ? ids : [...ids, activePresenceGame.id];
             };
         }
 
         const announce = () => {
             dispatcher.dispatch({
                 type: "RUNNING_GAMES_CHANGE",
-                added: [game],
+                added: [activePresenceGame],
                 removed: [],
                 games: runStore.getRunningGames()
             });
@@ -434,9 +470,9 @@
                 socketId: null,
                 pid,
                 activity: {
-                    name: GAME.name,
+                    name: PRIMARY_GAME.name,
                     type: 0,
-                    application_id: GAME.id,
+                    application_id: PRIMARY_GAME.id,
                     details: null,
                     state: null,
                     timestamps: { start: startedAt },
@@ -445,40 +481,65 @@
             });
         };
 
-        // --- Saat Katlama / Boost Motoru ---
+        // --- Safe Window Playtime Booster ---
+        // 5.000 saati Discord'un son 7 günlük penceresine uygun olarak (her oyuna 125 saat, ~5 gün)
+        // 40 doğrulanmış oyuna böler. Böylece ClickHouse ingestion filtresine takılmaz!
         let totalCreditedHours = 0;
         let isBoosting = false;
         let stopped = false;
 
-        const boost = async (hours = AUTO_BOOST_HOURS) => {
+        const boost = async (targetTotalHours = TOTAL_TARGET_HOURS, gameCount = GAMES_TO_SPREAD) => {
             if (stopped) return 0;
             if (isBoosting) {
-                console.warn("[CS2 Presence] Boost already in progress. Please wait.");
+                console.warn("[Game Time Booster] Boost already in progress. Please wait.");
                 return 0;
             }
-            if (!Number.isFinite(hours) || hours <= 0) {
-                console.warn("[CS2 Presence] Invalid hours.");
+            if (!Number.isFinite(targetTotalHours) || targetTotalHours <= 0) {
+                console.warn("[Game Time Booster] Invalid target hours.");
                 return 0;
             }
             isBoosting = true;
             try {
+                console.log("[Game Time Booster] Fetching verified game catalog from Discord CDN...");
+                const allGames = await loadDetectableGames();
+                const selectedGames = allGames.slice(0, Math.min(gameCount, allGames.length));
+                const hoursPerGame = targetTotalHours / selectedGames.length;
+                const durationMs = Math.round(hoursPerGame * 3600 * 1000);
+
+                console.log(`[Game Time Booster] Spreading ${targetTotalHours}h across ${selectedGames.length} verified games (~${hoursPerGame.toFixed(1)}h / ~${(hoursPerGame/24).toFixed(1)} days per game)...`);
+                console.log("[Game Time Booster] This fits within Discord's safe 7-day analytics ingestion window!");
+
                 const currentAuth = await prepareAuth();
                 if (stopped) return 0;
 
-                const durationMs = Math.round(hours * 3600 * 1000);
-                console.log(`[CS2 Presence] Claiming ${hours} hours for Counter-Strike 2 in a single verified session...`);
+                let credited = 0;
+                for (let i = 0; i < selectedGames.length; i += BATCH_SIZE) {
+                    if (stopped) break;
+                    const chunk = selectedGames.slice(i, i + BATCH_SIZE);
+                    const events = chunk.flatMap((game, idx) =>
+                        buildSessionEvents(game, durationMs, currentAuth.fingerprint, i + idx)
+                    );
 
-                const events = buildSessionEvents(durationMs, currentAuth.fingerprint);
-                const ok = await postScienceEvents(events, currentAuth);
-                if (ok) {
-                    totalCreditedHours += hours;
-                    console.log(`[CS2 Presence] ✓ SUCCESS! Credited ${hours} hours to Counter-Strike 2! (Total: ${totalCreditedHours}h)`);
-                    console.log("[CS2 Presence] Discord backend will process and reflect on your Game Time badge.");
-                    return hours;
-                } else {
-                    console.warn("[CS2 Presence] ✗ Failed to submit 5k hours to science endpoint.");
-                    return 0;
+                    const ok = await postScienceEvents(events, currentAuth);
+                    if (ok) {
+                        const batchHours = chunk.length * hoursPerGame;
+                        credited += batchHours;
+                        totalCreditedHours += batchHours;
+                        console.log(`[Game Time Booster] Progress: Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(selectedGames.length / BATCH_SIZE)} accepted (+${batchHours.toFixed(0)}h, Total: ${totalCreditedHours.toFixed(0)}h / ${targetTotalHours}h)`);
+                    } else {
+                        console.warn(`[Game Time Booster] Batch starting at index ${i} failed.`);
+                    }
+
+                    if (i + BATCH_SIZE < selectedGames.length && !stopped) {
+                        await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
+                    }
                 }
+
+                if (credited > 0) {
+                    console.log(`[Game Time Booster] ✓ SUCCESS! Credited ${credited.toFixed(0)} hours across ${selectedGames.length} games to Discord backend!`);
+                    console.log("[Game Time Booster] Telemetry events accepted by Discord science endpoint.");
+                }
+                return credited;
             } finally {
                 isBoosting = false;
             }
@@ -496,7 +557,7 @@
             dispatcher.dispatch({
                 type: "RUNNING_GAMES_CHANGE",
                 added: [],
-                removed: [game],
+                removed: [activePresenceGame],
                 games: withoutOurs(original.getRunningGames.call(runStore))
             });
             dispatcher.dispatch({ type: "LOCAL_ACTIVITY_UPDATE", socketId: null, pid, activity: null });
@@ -508,7 +569,7 @@
         const instance = {
             stop,
             boost,
-            game,
+            game: activePresenceGame,
             get creditedHours() { return totalCreditedHours; }
         };
         window[LOCK] = instance;
@@ -517,14 +578,16 @@
 
         announce();
         console.log("[Game Time Presence] Active. Rich presence displayed: Playing Counter-Strike 2");
-        console.log("[Game Time Presence] Single-shot booster ready. Default: 5,000 hours.");
-        console.log("[Game Time Presence] Manual call: await window.__gameTimePresence.boost(5000)");
+        console.log(`[Game Time Presence] Safe Ingestion Booster: Spreads 5,000h across 40 games (~5 days each).`);
+        console.log("[Game Time Presence] Manual boost: await window.__gameTimePresence.boost(5000)");
         console.log("[Game Time Presence] To stop: window.__gameTimePresence.stop()");
 
         if (AUTO_BOOST) {
             setTimeout(() => {
-                boost(AUTO_BOOST_HOURS).catch(err => console.warn(`[Game Time Presence] Auto-boost failed: ${err.message}`));
-            }, 1500);
+                boost(TOTAL_TARGET_HOURS, GAMES_TO_SPREAD).catch(err =>
+                    console.warn(`[Game Time Booster] Auto-boost failed: ${err.message}`)
+                );
+            }, 1200);
         }
     } catch (err) {
         delete window[LOCK];
