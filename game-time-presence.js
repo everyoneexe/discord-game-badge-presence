@@ -28,13 +28,13 @@
         os: "win32"
     });
 
-    // Otomatik 5.000 saat (Game Time maksimum rozet tavanı) basma ayarları
-    // Discord 7 günden eski telemetrileri drop ettiği için 5.000 saat 40 farklı doğrulanmış oyuna
-    // 125'er saat (5 gün) olarak dağıtılır. Böylece sunucu tüm veriyi firesiz kabul eder.
+    // Automatic 5,000-hour (Game Time max badge ceiling) boost configuration
+    // Because Discord drops telemetry older than 7 days, 5,000 hours are safely distributed across
+    // 40 distinct verified games at 125 hours (~5 days) each, ensuring complete server acceptance.
     const AUTO_BOOST = true;
     const TOTAL_TARGET_HOURS = 5000;
-    const GAMES_TO_SPREAD = 40; // 40 oyun * 125 saat = 5.000 saat
-    const HOURS_PER_GAME = TOTAL_TARGET_HOURS / GAMES_TO_SPREAD; // 125 saat (~5 gün)
+    const GAMES_TO_SPREAD = 40; // 40 games * 125 hours = 5,000 hours
+    const HOURS_PER_GAME = TOTAL_TARGET_HOURS / GAMES_TO_SPREAD; // 125 hours (~5 days)
     const BATCH_SIZE = 10;
     const BATCH_DELAY_MS = 600;
 
@@ -407,7 +407,7 @@
             }
         }
 
-        // --- Rich Presence Motoru (Counter-Strike 2) ---
+        // --- Rich Presence Engine (Counter-Strike 2) ---
         const original = {};
         const patchable = [
             "getRunningGames", "getGameForPID", "getVisibleGame", "getVisibleRunningGames",
@@ -482,8 +482,8 @@
         };
 
         // --- Safe Window Playtime Booster ---
-        // 5.000 saati Discord'un son 7 günlük penceresine uygun olarak (her oyuna 125 saat, ~5 gün)
-        // 40 doğrulanmış oyuna böler. Böylece ClickHouse ingestion filtresine takılmaz!
+        // Distributes 5,000 hours across 40 verified games (125 hours / ~5 days each)
+        // to stay within Discord's 7-day analytics ingestion window and avoid ClickHouse drops.
         let totalCreditedHours = 0;
         let isBoosting = false;
         let stopped = false;
