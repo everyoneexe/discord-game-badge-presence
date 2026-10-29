@@ -13,7 +13,6 @@
     const PRIMARY_GAME = Object.freeze(IS_LINUX ? {
         id: "1158877933042143272",
         name: "Counter-Strike 2",
-        win_exe: "cs2.exe",
         exeName: "cs2",
         exePath: "/home/user/.local/share/Steam/steamapps/common/Counter-Strike Global Offensive/game/bin/linuxsteamrt64/cs2",
         cmdLine: "/home/user/.local/share/Steam/steamapps/common/Counter-Strike Global Offensive/game/bin/linuxsteamrt64/cs2",
@@ -21,54 +20,71 @@
     } : {
         id: "1158877933042143272",
         name: "Counter-Strike 2",
-        win_exe: "cs2.exe",
         exeName: "cs2.exe",
         exePath: "c:/program files (x86)/steam/steamapps/common/counter-strike global offensive/game/bin/win64/cs2.exe",
         cmdLine: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\game\\bin\\win64\\cs2.exe",
         os: "win32"
     });
 
-    // Automatic 5,000-hour (Game Time max badge ceiling) boost configuration
-    // Because Discord drops telemetry older than 7 days, 5,000 hours are safely distributed across
-    // 40 distinct verified games at 125 hours (~5 days) each, ensuring complete server acceptance.
+    // Game Time ceiling is 5,000h. Submit 6,000h across 250 games (24h each) so per-session
+    // caps or dropped events still leave enough buffer to reach the max tier.
     const AUTO_BOOST = true;
-    const TOTAL_TARGET_HOURS = 5000;
-    const GAMES_TO_SPREAD = 40; // 40 games * 125 hours = 5,000 hours
-    const HOURS_PER_GAME = TOTAL_TARGET_HOURS / GAMES_TO_SPREAD; // 125 hours (~5 days)
-    const BATCH_SIZE = 10;
-    const BATCH_DELAY_MS = 600;
+    const TOTAL_TARGET_HOURS = 6000;
+    const GAMES_TO_SPREAD = 250;
+    const HOURS_PER_GAME = TOTAL_TARGET_HOURS / GAMES_TO_SPREAD; // 24 hours
+    const BATCH_SIZE = 25;
+    const BATCH_DELAY_MS = 450;
 
     const CDN_GAMES_URL = "https://cdn.discordapp.com/detectables/games.json";
-    const CLIENT_VERSION = "1.0.9253";
-    const CLIENT_BUILD_NUMBER = 594031;
-    const NATIVE_BUILD_NUMBER = 88414;
-    const OS_VERSION = "10.0.26200";
-    const MACHINE_GUID = "b5a79402-959c-4861-a579-2821dfbb3c2b";
-    const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) discord/1.0.9253 Chrome/148.0.7778.280 " +
-        "Electron/42.7.1 Safari/537.36";
 
     const uuid = () => (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
-    const b64utf8 = value => {
-        const bytes = new TextEncoder().encode(value);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        return btoa(binary);
-    };
     const sha256 = async value => new Uint8Array(
         await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
     );
 
     function getWebpackRequire() {
+        if (typeof webpackChunkdiscord_app !== "undefined") {
+            let req;
+            webpackChunkdiscord_app.push([[Symbol("game-time-presence")], {}, r => {
+                if (Object.keys(r?.c ?? {}).length > Object.keys(req?.c ?? {}).length) req = r;
+            }]);
+            webpackChunkdiscord_app.pop();
+            if (req) return req;
+        }
         if (window.Vencord?.Webpack?.wreq?.c) return window.Vencord.Webpack.wreq;
-        if (typeof webpackChunkdiscord_app === "undefined") return null;
+        return null;
+    }
 
-        let req;
-        webpackChunkdiscord_app.push([[Symbol("game-time-presence")], {}, r => {
-            if (Object.keys(r?.c ?? {}).length > Object.keys(req?.c ?? {}).length) req = r;
-        }]);
-        webpackChunkdiscord_app.pop();
-        return req;
+    const HTTP_METHODS = ["get", "post", "del"];
+
+    function isHttpClient(candidate) {
+        return candidate != null && HTTP_METHODS.every(method => typeof candidate[method] === "function");
+    }
+
+    function unwrapExports(value) {
+        if (!value || (typeof value !== "object" && typeof value !== "function")) return [];
+        return [value, value.default, ...Object.values(value)];
+    }
+
+    function resolveHttpClient(requireFn) {
+        for (const [id, factory] of Object.entries(requireFn?.m ?? {})) {
+            let source = "";
+            try {
+                source = typeof factory === "function" ? factory.toString() : "";
+            } catch (_) {}
+            if (!source.includes("HTTPUtils")) continue;
+            try {
+                const client = unwrapExports(requireFn(id)).find(isHttpClient);
+                if (client) return client;
+            } catch (_) {}
+        }
+        for (const cached of Object.values(requireFn?.c ?? {})) {
+            try {
+                const client = unwrapExports(cached?.exports).find(isHttpClient);
+                if (client) return client;
+            } catch (_) {}
+        }
+        return null;
     }
 
     function exportsFrom(req) {
@@ -115,176 +131,101 @@
         const req = getWebpackRequire();
         if (!req?.c) throw new Error("Discord Webpack registry was not found.");
 
+        const rest = resolveHttpClient(req);
+
         const exports = exportsFrom(req);
         const runStore = findStore(exports, "RunningGameStore");
         const dispatcher = findDispatcher(exports);
         if (!runStore || !dispatcher) throw new Error("RunningGameStore/Dispatcher was not found; incompatible Discord version.");
-        const authStore = findStore(exports, "AuthenticationStore");
-        const userStore = findStore(exports, "UserStore");
 
-        function getToken() {
-            try {
-                const token = authStore?.getToken?.();
-                if (token && typeof token === "string") return token;
-            } catch (_) {}
-            const origWarn = console.warn;
-            try {
-                console.warn = () => {};
-                for (const exp of exports) {
-                    try {
-                        if (exp && typeof exp.getToken === "function" && exp.getName?.() === "AuthenticationStore") {
-                            const token = exp.getToken();
-                            if (token && typeof token === "string") return token;
-                        }
-                    } catch (_) {}
-                }
-            } finally {
-                console.warn = origWarn;
+        async function makeExecutableFingerprint(userId) {
+            const machineId = uuid();
+            const header = await sha256("pe_header_" + userId);
+            const machine = await sha256(machineId + userId);
+            const sections = await sha256("pe_section_" + userId);
+            const certificate = await sha256("pe_cert_" + userId);
+            const mask = await sha256(userId + "https://discord.com/careers");
+
+            const binary = new Uint8Array(146);
+            const writer = new DataView(binary.buffer);
+            binary[0] = 1;
+            binary[1] = 1;
+            writer.setBigUint64(2, 65432100n, true);
+            writer.setUint32(10, 1690000000, true);
+            writer.setUint32(14, 0x02500000, true);
+            binary.set(header, 18);
+            binary.set(machine, 50);
+            binary.set(sections, 82);
+            binary.set(certificate, 114);
+
+            for (let index = 1; index < binary.length; index++) {
+                binary[index] ^= mask[(index - 1) % mask.length];
             }
-            return null;
-        }
-
-        function getUserId(token) {
-            try {
-                const uid = userStore?.getCurrentUser?.()?.id || authStore?.getId?.();
-                if (uid && /^\d+$/.test(uid)) return String(uid);
-            } catch (_) {}
-            try {
-                const part = String(token ?? "").split(".")[0];
-                if (part && part !== "mfa") {
-                    const pad = "=".repeat((4 - (part.length % 4)) % 4);
-                    const decoded = atob(part + pad);
-                    if (/^\d+$/.test(decoded)) return decoded;
-                }
-            } catch (_) {}
-            return "";
-        }
-
-        async function generateFingerprint(userId) {
-            const out = new Uint8Array(146);
-            out[0] = 1;
-            out[1] = 3;
-            const view = new DataView(out.buffer);
-            view.setUint32(2, 45829120, true);
-            view.setUint32(6, 0, true);
-            view.setUint32(10, 1700000000, true);
-            view.setUint32(14, 50000000, true);
-            out.set(await sha256("header"), 18);
-            out.set(await sha256(MACHINE_GUID + userId), 50);
-            out.set(await sha256("sections"), 82);
-            out.set(await sha256("cert"), 114);
-            const key = await sha256(userId + "https://discord.com/careers");
-            for (let i = 1; i < out.length; i++) out[i] ^= key[(i - 1) & 31];
-            let binary = "";
-            for (let i = 0; i < out.length; i++) binary += String.fromCharCode(out[i]);
-            return btoa(binary);
-        }
-
-        function buildSuperProps(launchSignature, heartbeatSession, clientLaunchId) {
-            return b64utf8(JSON.stringify({
-                os: "Windows",
-                browser: "Discord Client",
-                release_channel: "stable",
-                client_version: CLIENT_VERSION,
-                os_version: OS_VERSION,
-                os_arch: "x64",
-                app_arch: "x64",
-                system_locale: "en-US",
-                has_client_mods: false,
-                browser_user_agent: USER_AGENT,
-                browser_version: "42.7.1",
-                os_sdk_version: "26200",
-                client_build_number: CLIENT_BUILD_NUMBER,
-                native_build_number: NATIVE_BUILD_NUMBER,
-                client_event_source: null,
-                client_app_state: "focused",
-                client_launch_id: clientLaunchId,
-                launch_signature: launchSignature,
-                client_heartbeat_session_id: heartbeatSession
-            }));
+            return btoa(String.fromCharCode(...binary));
         }
 
         const launchSignature = uuid();
         const heartbeatSession = uuid();
-        const clientLaunchId = uuid();
-        const superProps = buildSuperProps(launchSignature, heartbeatSession, clientLaunchId);
-        let auth = null;
+        let identity = null;
 
-        async function getAnalyticsToken(token) {
-            try {
-                const res = await fetch("/api/v9/users/@me?with_analytics_token=true", {
-                    headers: {
-                        "authorization": token,
-                        "x-super-properties": superProps
-                    }
-                });
-                if (!res.ok) return null;
-                const data = await res.json();
-                return data.analytics_token ?? null;
-            } catch (_) {
-                return null;
-            }
+        async function loadIdentity() {
+            if (identity) return identity;
+            if (!rest) throw new Error("Discord's internal HTTP client could not be located.");
+            const response = await rest.get({ url: "/users/@me", query: { with_analytics_token: true } });
+            const profile = response?.body ?? {};
+            const analyticsToken = profile.analytics_token;
+            const userId = profile.id == null ? "" : String(profile.id);
+            if (!analyticsToken) throw new Error("analytics_token is missing from the current session.");
+            if (!/^\d+$/.test(userId)) throw new Error("Could not resolve the current Discord user ID.");
+            const fingerprint = await makeExecutableFingerprint(userId);
+            identity = { analyticsToken, fingerprint };
+            return identity;
         }
 
-        async function prepareAuth() {
-            if (auth) return auth;
-            const token = getToken();
-            if (!token) throw new Error("Discord token could not be found.");
-            const userId = getUserId(token);
-            if (!userId) throw new Error("Discord user ID could not be decoded.");
-            const analyticsToken = await getAnalyticsToken(token);
-            if (!analyticsToken) throw new Error("analytics_token could not be retrieved.");
-            const fingerprint = await generateFingerprint(userId);
-            auth = { token, userId, analyticsToken, fingerprint, superProps };
-            return auth;
-        }
-
-        async function loadDetectableGames() {
+        async function fetchGameCatalog() {
+            let source = null;
             try {
-                const res = await fetch(CDN_GAMES_URL);
-                if (res.ok) {
-                    const raw = await res.json();
-                    const list = [];
-                    const seen = new Set();
-                    for (const item of raw) {
-                        const id = String(item?.id ?? "");
-                        if (!id || seen.has(id)) continue;
-                        const winExe = item?.executables?.find(e => e?.os === "win32" && e?.name)?.name;
-                        if (!winExe) continue;
-                        seen.add(id);
-                        list.push({
-                            id,
-                            name: item.name,
-                            exe: winExe.replace(/^>/, "")
-                        });
-                    }
-                    if (list.length > 0) return list;
-                }
+                const response = await rest?.get({ url: "/applications/detectable" });
+                const payload = response?.body;
+                source = Array.isArray(payload) ? payload : payload?.applications;
             } catch (_) {}
-            return [
-                { id: PRIMARY_GAME.id, name: PRIMARY_GAME.name, exe: PRIMARY_GAME.win_exe },
-                { id: "733391060934070334", name: "Among Us", exe: "Among Us.exe" },
-                { id: "356869127241826314", name: "Grand Theft Auto V", exe: "GTA5.exe" },
-                { id: "426249774406238210", name: "Apex Legends", exe: "r5apex.exe" },
-                { id: "403164998249840640", name: "PUBG: BATTLEGROUNDS", exe: "TslGame.exe" },
-                { id: "417935350901768193", name: "Tom Clancy's Rainbow Six Siege", exe: "RainbowSix.exe" }
-            ];
+            if (!Array.isArray(source)) {
+                try {
+                    const response = await fetch(CDN_GAMES_URL);
+                    if (response.ok) source = await response.json();
+                } catch (_) {}
+            }
+            if (!Array.isArray(source)) throw new Error("Discord's detectable-game catalog is unavailable.");
+
+            const unique = new Map();
+            for (const app of source) {
+                if (app?.id == null) continue;
+                const id = String(app.id);
+                if (unique.has(id)) continue;
+                const executable = app?.executables?.find(entry => entry?.os === "win32" && entry?.name);
+                if (!executable) continue;
+                unique.set(id, {
+                    id,
+                    name: app?.name ?? "Unknown",
+                    exe: executable.name.replace(/^>/, "")
+                });
+            }
+            if (unique.size === 0) throw new Error("No detectable Windows games were found.");
+            return [...unique.values()];
         }
 
         let seq = 0;
         const nextSeq = () => ++seq;
 
-        const buildSessionEvents = (gameEntry, durationMs, fingerprint, sessionIndex = 0) => {
+        const buildSessionEvents = (gameEntry, durationMs, fingerprint) => {
             const sessionId = uuid();
-            const offsetMs = sessionIndex * (20 * 60 * 1000);
-            const now = Date.now() - offsetMs;
+            const now = Date.now();
             const start = Math.max(0, now - durationMs);
             const jitter = Math.floor(Math.random() * 450) + 120;
 
             const launchProps = {
                 client_track_timestamp: start + jitter,
                 client_heartbeat_session_id: heartbeatSession,
-                event_sequence_number: nextSeq(),
                 game: gameEntry.name,
                 game_id: gameEntry.id,
                 verified: true,
@@ -321,13 +262,12 @@
                 client_send_timestamp: start + jitter
             };
 
-            return [
+            const events = [
                 {
                     type: "running_game_heartbeat",
                     properties: {
                         client_track_timestamp: start,
                         client_heartbeat_session_id: heartbeatSession,
-                        event_sequence_number: nextSeq(),
                         game_id: gameEntry.id,
                         game_name: gameEntry.name,
                         game_metadata: null,
@@ -353,7 +293,6 @@
                     properties: {
                         client_track_timestamp: now,
                         client_heartbeat_session_id: heartbeatSession,
-                        event_sequence_number: nextSeq(),
                         game_id: gameEntry.id,
                         game_name: gameEntry.name,
                         game_metadata: null,
@@ -371,39 +310,43 @@
                     }
                 }
             ];
+
+            for (const event of events) {
+                event.properties.event_sequence_number = nextSeq();
+            }
+            return events;
         };
 
-        async function postScienceEvents(events, currentAuth, retry = 0) {
+        const wait = seconds => new Promise(resolve => setTimeout(resolve, seconds * 1000));
+
+        async function sendScienceBatch(events, context, attempt = 0) {
             try {
-                const res = await fetch("/api/v9/science", {
-                    method: "POST",
-                    headers: {
-                        "accept": "*/*",
-                        "accept-language": "en-US",
-                        "authorization": currentAuth.token,
-                        "content-type": "application/json",
-                        "origin": "https://discord.com",
-                        "referer": "https://discord.com/channels/@me",
-                        "x-super-properties": currentAuth.superProps
-                    },
-                    referrer: "https://discord.com/channels/@me",
-                    body: JSON.stringify({ token: currentAuth.analyticsToken, events })
+                const response = await rest.post({
+                    url: "/science",
+                    body: { token: context.analyticsToken, events }
                 });
-                if (res.status === 204 || res.status === 200) return true;
-                if (res.status === 429 && retry < 3) {
-                    const retryHeader = res.headers.get("retry-after");
-                    const waitSec = retryHeader ? parseFloat(retryHeader) : 2.5;
-                    console.warn(`[Game Time Booster] Rate limited (429). Retrying in ${waitSec.toFixed(1)}s...`);
-                    await new Promise(r => setTimeout(r, Math.max(waitSec * 1000, 2000)));
-                    return await postScienceEvents(events, currentAuth, retry + 1);
+                if (response?.ok || response?.status === 200 || response?.status === 204) return true;
+                if (response?.status === 429 && attempt < 3) {
+                    console.warn("[Game Time Booster] Rate limited; cooling down for 2.5s.");
+                    await wait(2.5);
+                    return sendScienceBatch(events, context, attempt + 1);
                 }
                 return false;
-            } catch (err) {
-                if (retry < 2) {
-                    await new Promise(r => setTimeout(r, 1500));
-                    return await postScienceEvents(events, currentAuth, retry + 1);
+            } catch (error) {
+                const status = error?.status ?? error?.statusCode;
+                if (status === 429 && attempt < 3) {
+                    const header = error?.headers?.get?.("retry-after") ?? error?.headers?.["retry-after"];
+                    const parsed = Number.parseFloat(header);
+                    const delay = Number.isFinite(parsed) ? Math.max(parsed, 2) : 2.5;
+                    console.warn(`[Game Time Booster] Rate limited; cooling down for ${delay.toFixed(1)}s.`);
+                    await wait(delay);
+                    return sendScienceBatch(events, context, attempt + 1);
                 }
-                throw err;
+                if (attempt < 2) {
+                    await wait(1.5);
+                    return sendScienceBatch(events, context, attempt + 1);
+                }
+                throw error;
             }
         }
 
@@ -481,9 +424,9 @@
             });
         };
 
-        // --- Safe Window Playtime Booster ---
-        // Distributes 5,000 hours across 40 verified games (125 hours / ~5 days each)
-        // to stay within Discord's 7-day analytics ingestion window and avoid ClickHouse drops.
+        // --- Playtime Booster ---
+        // Submits short, recent sessions (24h per game) through Discord's own REST layer.
+        // The badge ceiling is 5,000h; 250 games x 24h gives 6,000h of buffer.
         let totalCreditedHours = 0;
         let isBoosting = false;
         let stopped = false;
@@ -500,27 +443,31 @@
             }
             isBoosting = true;
             try {
-                console.log("[Game Time Booster] Fetching verified game catalog from Discord CDN...");
-                const allGames = await loadDetectableGames();
+                console.log("[Game Time Booster] Fetching verified game catalog...");
+                const allGames = await fetchGameCatalog();
+                for (let i = allGames.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [allGames[i], allGames[j]] = [allGames[j], allGames[i]];
+                }
                 const selectedGames = allGames.slice(0, Math.min(gameCount, allGames.length));
                 const hoursPerGame = targetTotalHours / selectedGames.length;
                 const durationMs = Math.round(hoursPerGame * 3600 * 1000);
 
-                console.log(`[Game Time Booster] Spreading ${targetTotalHours}h across ${selectedGames.length} verified games (~${hoursPerGame.toFixed(1)}h / ~${(hoursPerGame/24).toFixed(1)} days per game)...`);
-                console.log("[Game Time Booster] This fits within Discord's safe 7-day analytics ingestion window!");
+                console.log(`[Game Time Booster] Spreading ${targetTotalHours}h across ${selectedGames.length} verified games (~${hoursPerGame.toFixed(1)}h per game)...`);
+                console.log("[Game Time Booster] Using short, recent sessions to avoid ingestion-window drops.");
 
-                const currentAuth = await prepareAuth();
+                const context = await loadIdentity();
                 if (stopped) return 0;
 
                 let credited = 0;
                 for (let i = 0; i < selectedGames.length; i += BATCH_SIZE) {
                     if (stopped) break;
                     const chunk = selectedGames.slice(i, i + BATCH_SIZE);
-                    const events = chunk.flatMap((game, idx) =>
-                        buildSessionEvents(game, durationMs, currentAuth.fingerprint, i + idx)
+                    const events = chunk.flatMap(game =>
+                        buildSessionEvents(game, durationMs, context.fingerprint)
                     );
 
-                    const ok = await postScienceEvents(events, currentAuth);
+                    const ok = await sendScienceBatch(events, context);
                     if (ok) {
                         const batchHours = chunk.length * hoursPerGame;
                         credited += batchHours;
@@ -531,13 +478,13 @@
                     }
 
                     if (i + BATCH_SIZE < selectedGames.length && !stopped) {
-                        await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
+                        const delay = BATCH_DELAY_MS + Math.floor((Math.random() - 0.5) * 150);
+                        await new Promise(r => setTimeout(r, Math.max(100, delay)));
                     }
                 }
 
                 if (credited > 0) {
-                    console.log(`[Game Time Booster] ✓ SUCCESS! Credited ${credited.toFixed(0)} hours across ${selectedGames.length} games to Discord backend!`);
-                    console.log("[Game Time Booster] Telemetry events accepted by Discord science endpoint.");
+                    console.log(`[Game Time Booster] ✓ Accepted ${credited.toFixed(0)}h across ${selectedGames.length} games. Badges can take 24-48h to update.`);
                 }
                 return credited;
             } finally {
@@ -578,8 +525,8 @@
 
         announce();
         console.log("[Game Time Presence] Active. Rich presence displayed: Playing Counter-Strike 2");
-        console.log(`[Game Time Presence] Safe Ingestion Booster: Spreads 5,000h across 40 games (~5 days each).`);
-        console.log("[Game Time Presence] Manual boost: await window.__gameTimePresence.boost(5000)");
+        console.log(`[Game Time Presence] Booster: submits ${TOTAL_TARGET_HOURS}h across ${GAMES_TO_SPREAD} games (${HOURS_PER_GAME}h each) via Discord REST.`);
+        console.log(`[Game Time Presence] Manual boost: await window.__gameTimePresence.boost(${TOTAL_TARGET_HOURS}, ${GAMES_TO_SPREAD})`);
         console.log("[Game Time Presence] To stop: window.__gameTimePresence.stop()");
 
         if (AUTO_BOOST) {
