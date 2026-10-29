@@ -1,10 +1,16 @@
 (async () => {
     "use strict";
 
-    const INSTANCE_KEY = "__gameTimePresence";
-    if (window[INSTANCE_KEY]) {
-        console.warn("[Game Time] Already running. Stop it first: window.__gameTimePresence.stop()");
+    if (typeof webpackChunkdiscord_app === "undefined") {
+        console.error("[Game Time] Discord desktop client required.");
         return;
+    }
+
+    const INSTANCE_KEY = "__gameTimePresence";
+    const previous = window[INSTANCE_KEY];
+    if (previous?.stop) {
+        console.warn("[Game Time] Replacing the previous instance.");
+        try { previous.stop(); } catch (_) {}
     }
     window[INSTANCE_KEY] = { loading: true };
 
@@ -12,29 +18,23 @@
         totalHours: 6000,
         games: 250,
         batchSize: 25,
-        delayMs: 450
+        delayMs: 450,
+        wobble: false,
+        dryRun: false
     });
 
     const CATALOG_URL = "https://cdn.discordapp.com/detectables/games.json";
 
-    const uuid = () => (crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+    const uuid = () => crypto.randomUUID();
     const sha256 = async value => new Uint8Array(
         await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
     );
     const wait = seconds => new Promise(resolve => setTimeout(resolve, seconds * 1000));
 
     function webpackRequire() {
-        if (typeof webpackChunkdiscord_app !== "undefined") {
-            let found;
-            webpackChunkdiscord_app.push([[Symbol("game-time")], {}, requireFn => {
-                if (!found || Object.keys(requireFn?.c ?? {}).length > Object.keys(found?.c ?? {}).length) {
-                    found = requireFn;
-                }
-            }]);
-            webpackChunkdiscord_app.pop();
-            if (found) return found;
-        }
-        return window.Vencord?.Webpack?.wreq?.c ? window.Vencord.Webpack.wreq : null;
+        const requireFn = webpackChunkdiscord_app.push([[Symbol()], {}, r => r]);
+        webpackChunkdiscord_app.pop();
+        return requireFn;
     }
 
     const HTTP_METHODS = ["get", "post", "del"];
@@ -89,20 +89,28 @@
         binary.set(sections, 82);
         binary.set(certificate, 114);
 
-        for (let index = 1; index < binary.length; index++) {
-            binary[index] ^= mask[(index - 1) % mask.length];
+        for (let i = 1; i < binary.length; i++) {
+            binary[i] ^= mask[(i - 1) & 31];
         }
-        return btoa(String.fromCharCode(...binary));
+
+        let str = "";
+        for (let i = 0; i < binary.length; i++) str += String.fromCharCode(binary[i]);
+        return btoa(str);
     }
 
     function normalizeGame(app) {
         if (app?.id == null) return null;
-        const executable = app?.executables?.find(entry => entry?.os === "win32" && entry?.name);
-        if (!executable) return null;
+        const winExe = app?.executables?.find(entry => entry?.os === "win32" && entry?.name);
+        const exeName = winExe
+            ? winExe.name.replace(/^>/, "")
+            : (!app.executables || app.executables.length === 0)
+                ? `${(app.name || "game").replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "game"}.exe`
+                : null;
+        if (!exeName) return null;
         return {
             id: String(app.id),
             name: app?.name ?? "Unknown",
-            exe: executable.name.replace(/^>/, "")
+            exe: exeName
         };
     }
 
@@ -114,7 +122,9 @@
         return items;
     }
 
-    function sessionEvents(game, durationMs, fingerprint, state) {
+    function sessionEvents(game, baseMs, fingerprint, state) {
+        const drift = CONFIG.wobble ? 1 + (Math.random() * 0.06 - 0.03) : 1;
+        const durationMs = Math.max(360000, Math.round(baseMs * drift));
         const sessionId = uuid();
         const now = Date.now();
         const start = Math.max(0, now - durationMs);
@@ -207,7 +217,7 @@
         for (const event of events) {
             event.properties.event_sequence_number = ++state.sequence;
         }
-        return events;
+        return { events, hours: durationMs / 3600000 };
     }
 
     async function getAuthContext(client) {
@@ -216,10 +226,12 @@
         const profile = response?.body ?? {};
         const analyticsToken = profile.analytics_token;
         const userId = profile.id == null ? "" : String(profile.id);
+        const username = profile.username || "user";
         if (!analyticsToken) throw new Error("analytics_token is missing from this session.");
         if (!/^\d+$/.test(userId)) throw new Error("Discord user ID could not be resolved.");
         return {
             analyticsToken,
+            username,
             fingerprint: await fingerprintFor(userId)
         };
     }
@@ -244,39 +256,31 @@
             const game = normalizeGame(app);
             if (game && !unique.has(game.id)) unique.set(game.id, game);
         }
-        if (unique.size === 0) throw new Error("No detectable Windows games were found.");
+        if (unique.size === 0) throw new Error("No detectable games were found.");
         return [...unique.values()];
     }
 
-    async function sendBatch(events, context, attempt = 0) {
+    async function sendBatch(events, context) {
+        if (CONFIG.dryRun) return true;
         try {
-            // Discord's own REST client supplies auth and super-properties headers.
+            // The client attaches auth and super-properties headers.
             const response = await context.client.post({
                 url: "/science",
                 body: { token: context.analyticsToken, events }
             });
             if (response?.ok || response?.status === 200 || response?.status === 204) return true;
-            if (response?.status === 429 && attempt < 3) {
-                console.warn("[Game Time] Rate limited; waiting 2.5s.");
-                await wait(2.5);
-                return sendBatch(events, context, attempt + 1);
+            if (response?.status === 429) {
+                console.warn("[Game Time] Rate limited; cooling down 5s.");
+                await wait(5);
             }
             return false;
         } catch (error) {
             const status = error?.status ?? error?.statusCode;
-            if (status === 429 && attempt < 3) {
-                const retryAfter = error?.headers?.get?.("retry-after") ?? error?.headers?.["retry-after"];
-                const parsed = Number.parseFloat(retryAfter);
-                const delay = Number.isFinite(parsed) ? Math.max(parsed, 2) : 2.5;
-                console.warn(`[Game Time] Rate limited; waiting ${delay.toFixed(1)}s.`);
-                await wait(delay);
-                return sendBatch(events, context, attempt + 1);
+            if (status === 429) {
+                console.warn("[Game Time] Rate limited; cooling down 5s.");
+                await wait(5);
             }
-            if (attempt < 2) {
-                await wait(1.5);
-                return sendBatch(events, context, attempt + 1);
-            }
-            throw error;
+            return false;
         }
     }
 
@@ -311,32 +315,48 @@
             const catalog = shuffle(await getCatalog(client));
             const selected = catalog.slice(0, Math.min(gameCount, catalog.length));
             const hoursPerGame = totalHours / selected.length;
-            const durationMs = Math.round(hoursPerGame * 3600 * 1000);
+            const baseDurationMs = Math.round(hoursPerGame * 3600 * 1000);
 
-            console.log(`[Game Time] Submitting ${totalHours}h across ${selected.length} games (${hoursPerGame.toFixed(1)}h each).`);
             const context = { ...(await getAuthContext(client)), client };
+            console.log(`[Game Time] Connected as ${context.username} | target: ${totalHours}h across ${selected.length} games (~${hoursPerGame.toFixed(1)}h/game)`);
+            if (CONFIG.dryRun) console.warn("[Game Time] Dry-run mode is ON — no data will be sent.");
             if (stopped) return 0;
+
+            let forgedCount = 0;
+            const totalBatches = Math.ceil(selected.length / CONFIG.batchSize);
 
             for (let offset = 0; offset < selected.length; offset += CONFIG.batchSize) {
                 if (stopped) break;
                 const chunk = selected.slice(offset, offset + CONFIG.batchSize);
-                const events = chunk.flatMap(game => sessionEvents(game, durationMs, context.fingerprint, state));
-                const accepted = await sendBatch(events, context);
-                if (accepted) {
-                    const batchHours = chunk.length * hoursPerGame;
-                    credited += batchHours;
-                    console.log(`[Game Time] Batch ${Math.floor(offset / CONFIG.batchSize) + 1}/${Math.ceil(selected.length / CONFIG.batchSize)} accepted (+${batchHours.toFixed(0)}h, total ${credited.toFixed(0)}h).`);
-                } else {
-                    console.warn(`[Game Time] Batch at index ${offset} was rejected.`);
+                const allEvents = [];
+                let chunkHours = 0;
+
+                for (const game of chunk) {
+                    const result = sessionEvents(game, baseDurationMs, context.fingerprint, state);
+                    allEvents.push(...result.events);
+                    chunkHours += result.hours;
                 }
+
+                const batchNum = Math.floor(offset / CONFIG.batchSize) + 1;
+                const accepted = await sendBatch(allEvents, context);
+
+                if (accepted) {
+                    forgedCount += chunk.length;
+                    credited += chunkHours;
+                    const tag = CONFIG.dryRun ? "[dry-run] " : "";
+                    console.log(`[Game Time] ${tag}Batch ${batchNum}/${totalBatches} accepted (+${chunkHours.toFixed(1)}h, total ${credited.toFixed(0)}h)`);
+                } else {
+                    console.warn(`[Game Time] Batch ${batchNum}/${totalBatches} was rejected.`);
+                }
+
                 if (offset + CONFIG.batchSize < selected.length && !stopped) {
-                    const delay = CONFIG.delayMs + Math.floor((Math.random() - 0.5) * 150);
-                    await wait(Math.max(100, delay) / 1000);
+                    const jitter = CONFIG.delayMs + Math.floor((Math.random() - 0.5) * 150);
+                    await wait(Math.max(100, jitter) / 1000);
                 }
             }
 
             if (credited > 0) {
-                console.log(`[Game Time] Done: ${credited.toFixed(0)}h accepted. Badge updates may take 24-48h.`);
+                console.log(`[Game Time] Done: ${forgedCount}/${selected.length} games | ${credited.toFixed(0)}h accepted. Badge updates may take 24-48h.`);
             }
             return credited;
         } finally {
